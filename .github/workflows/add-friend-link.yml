@@ -5,7 +5,6 @@ on:
 
 jobs:
   add-friend:
-    if: contains(github.event.issue.labels.*.name, '友链')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,19 +17,21 @@ jobs:
           script: |
             const fs = require('fs');
             const body = context.payload.issue.body;
+            console.log('Issue内容:', body);
             
-            // 解析Issue内容
-            const name = body.match(/博客名称\s*\n\s*(.+)/)?.[1]?.trim();
-            const url = body.match(/博客地址\s*\n\s*(.+)/)?.[1]?.trim();
-            const avatar = body.match(/头像地址\s*\n\s*(.+)/)?.[1]?.trim();
-            const desc = body.match(/博客描述\s*\n\s*(.+)/)?.[1]?.trim();
+            // 简化解析，只要有关键词就行
+            const name = body.match(/名称.*[:：]\s*(.+)/m)?.[1]?.trim();
+            const url = body.match(/地址.*[:：]\s*(.+)/m)?.[1]?.trim();
+            const avatar = body.match(/头像.*[:：]\s*(.+)/m)?.[1]?.trim();
+            const desc = body.match(/描述.*[:：]\s*(.+)/m)?.[1]?.trim();
             
-            if (!name || !url || !avatar || !desc) return;
+            console.log('解析结果:', {name, url, avatar, desc});
             
-            // 读取并更新friends.json
-            const data = JSON.parse(fs.readFileSync('friends.json', 'utf8'));
-            data.push({ name, url, avatar, desc });
-            fs.writeFileSync('friends.json', JSON.stringify(data, null, 2));
+            if (name && url) {
+              const data = JSON.parse(fs.readFileSync('friends.json', 'utf8'));
+              data.push({ name, url, avatar: avatar || '', desc: desc || '' });
+              fs.writeFileSync('friends.json', JSON.stringify(data, null, 2));
+            }
 
       - name: 提交
         run: |
