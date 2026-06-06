@@ -1,54 +1,41 @@
-name: 友链申请
-description: 申请添加友情链接
-title: "[友链申请] "
-labels: ["友链"]
-body:
-  - type: markdown
-    attributes:
-      value: |
-        请填写以下信息，审核通过后自动添加到友链。
+name: 自动添加友链
+on:
+  issues:
+    types: [closed]
 
-  - type: input
-    id: name
-    attributes:
-      label: 博客名称
-      description: 【必填】你的博客名称
-      placeholder: 云途札记
-    validations:
-      required: true
+jobs:
+  add-friend:
+    if: contains(github.event.issue.labels.*.name, '友链')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-  - type: input
-    id: url
-    attributes:
-      label: 博客地址
-      description: 【必填】完整网址，带 https://
-      placeholder: https://blog.lzplus.top
-    validations:
-      required: true
+      - name: 解析并添加友链
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = context.payload.issue.body;
+            
+            // 解析Issue内容
+            const name = body.match(/博客名称\s*\n\s*(.+)/)?.[1]?.trim();
+            const url = body.match(/博客地址\s*\n\s*(.+)/)?.[1]?.trim();
+            const avatar = body.match(/头像地址\s*\n\s*(.+)/)?.[1]?.trim();
+            const desc = body.match(/博客描述\s*\n\s*(.+)/)?.[1]?.trim();
+            
+            if (!name || !url || !avatar || !desc) return;
+            
+            // 读取并更新friends.json
+            const data = JSON.parse(fs.readFileSync('friends.json', 'utf8'));
+            data.push({ name, url, avatar, desc });
+            fs.writeFileSync('friends.json', JSON.stringify(data, null, 2));
 
-  - type: input
-    id: avatar
-    attributes:
-      label: 头像地址
-      description: 【必填】头像图片直链
-      placeholder: https://xxx.com/avatar.jpg
-    validations:
-      required: true
-
-  - type: input
-    id: desc
-    attributes:
-      label: 博客描述
-      description: 【必填】一句话介绍你的博客
-      placeholder: 行路于云间，落笔作札记
-    validations:
-      required: true
-
-  - type: checkboxes
-    attributes:
-      label: 确认事项
-      options:
-        - label: 我已将本站添加到我的友链中
-          required: true
-        - label: 我确认以上信息真实有效
-          required: true
+      - name: 提交
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add friends.json
+          git commit -m "自动添加友链" || exit 0
+          git push
