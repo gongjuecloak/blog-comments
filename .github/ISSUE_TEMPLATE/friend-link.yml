@@ -1,0 +1,36 @@
+name: 友链申请
+description: 申请添加友情链接
+title: "[友链申请] "
+labels: ["友链"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: 博客名称
+      placeholder: 云途札记
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: 博客地址
+      placeholder: https://blog.lzplus.top
+    validations:
+      required: true
+
+  - type: input
+    id: avatar
+    attributes:
+      label: 头像地址
+      placeholder: https://xxx.com/avatar.jpg
+    validations:
+      required: true
+
+  - type: input
+    id: desc
+    attributes:
+      label: 博客描述
+      placeholder: 行路于云间，落笔作札记
+    validations:
+      required: true
