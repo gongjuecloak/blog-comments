@@ -17,26 +17,37 @@ jobs:
           script: |
             const fs = require('fs');
             const body = context.payload.issue.body;
-            console.log('Issue内容:', body);
             
-            // 简化解析，只要有关键词就行
+            // 解析内容
             const name = body.match(/名称.*[:：]\s*(.+)/m)?.[1]?.trim();
             const url = body.match(/地址.*[:：]\s*(.+)/m)?.[1]?.trim();
             const avatar = body.match(/头像.*[:：]\s*(.+)/m)?.[1]?.trim();
             const desc = body.match(/描述.*[:：]\s*(.+)/m)?.[1]?.trim();
             
-            console.log('解析结果:', {name, url, avatar, desc});
+            if (!name || !url) return;
             
-            if (name && url) {
-              const data = JSON.parse(fs.readFileSync('friends.json', 'utf8'));
-              data.push({ name, url, avatar: avatar || '', desc: desc || '' });
-              fs.writeFileSync('friends.json', JSON.stringify(data, null, 2));
+            // ✅ 如果文件不存在，先创建空数组
+            let data = [];
+            if (fs.existsSync('friends.json')) {
+              data = JSON.parse(fs.readFileSync('friends.json', 'utf8'));
             }
+            
+            // 添加新友链
+            data.push({ 
+              name, 
+              url, 
+              avatar: avatar || 'https://picsum.photos/100/100', 
+              desc: desc || '' 
+            });
+            
+            // 写入文件
+            fs.writeFileSync('friends.json', JSON.stringify(data, null, 2));
+            console.log('已添加友链:', name);
 
-      - name: 提交
+      - name: 提交到当前仓库
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add friends.json
-          git commit -m "自动添加友链" || exit 0
+          git commit -m "自动添加友链" || echo "没有变化"
           git push
