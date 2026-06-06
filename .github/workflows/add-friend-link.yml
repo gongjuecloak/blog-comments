@@ -1,56 +1,54 @@
-name: 自动添加友链
-on:
-  issues:
-    types: [closed]  # Issue 关闭时触发
+name: 友链申请
+description: 申请添加友情链接
+title: "[友链申请] "
+labels: ["友链"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请填写以下信息，审核通过后自动添加到友链。
 
-jobs:
-  add-friend:
-    if: contains(github.event.issue.labels.*.name, '友链')  # 只有带"友链"标签才执行
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+  - type: input
+    id: name
+    attributes:
+      label: 博客名称
+      description: 【必填】你的博客名称
+      placeholder: 云途札记
+    validations:
+      required: true
 
-      - name: 解析 Issue 内容
-        id: parse
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const body = context.payload.issue.body;
-            
-            // 从Issue中提取4个字段
-            const name = body.match(/名称.*[:：]\s*(.+)/)?.[1]?.trim();
-            const url = body.match(/地址.*[:：]\s*(.+)/)?.[1]?.trim();
-            const avatar = body.match(/头像.*[:：]\s*(.+)/)?.[1]?.trim();
-            const desc = body.match(/描述.*[:：]\s*(.+)/)?.[1]?.trim();
-            
-            if (!name || !url || !avatar || !desc) {
-              core.setFailed('信息不完整');
-              return;
-            }
-            
-            core.setOutput('name', name);
-            core.setOutput('url', url);
-            core.setOutput('avatar', avatar);
-            core.setOutput('desc', desc);
+  - type: input
+    id: url
+    attributes:
+      label: 博客地址
+      description: 【必填】完整网址，带 https://
+      placeholder: https://blog.lzplus.top
+    validations:
+      required: true
 
-      - name: 更新 friends.json
-        run: |
-          # 读取现有文件
-          cat > /tmp/tmp.json << 'EOF'
-          $(cat friends.json)
-          EOF
-          
-          # 添加新友链
-          jq '. += [{"name": "${{ steps.parse.outputs.name }}", "url": "${{ steps.parse.outputs.url }}", "avatar": "${{ steps.parse.outputs.avatar }}", "desc": "${{ steps.parse.outputs.desc }}"}]' friends.json > /tmp/new.json
-          mv /tmp/new.json friends.json
+  - type: input
+    id: avatar
+    attributes:
+      label: 头像地址
+      description: 【必填】头像图片直链
+      placeholder: https://xxx.com/avatar.jpg
+    validations:
+      required: true
 
-      - name: 提交并推送
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add friends.json
-          git commit -m "自动添加友链：${{ steps.parse.outputs.name }}"
-          git push
+  - type: input
+    id: desc
+    attributes:
+      label: 博客描述
+      description: 【必填】一句话介绍你的博客
+      placeholder: 行路于云间，落笔作札记
+    validations:
+      required: true
+
+  - type: checkboxes
+    attributes:
+      label: 确认事项
+      options:
+        - label: 我已将本站添加到我的友链中
+          required: true
+        - label: 我确认以上信息真实有效
+          required: true
