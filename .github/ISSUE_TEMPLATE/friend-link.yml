@@ -7,7 +7,7 @@ body:
     id: name
     attributes:
       label: 博客名称
-      placeholder: 云途札记
+      placeholder: 博客名称
     validations:
       required: true
 
@@ -15,7 +15,7 @@ body:
     id: url
     attributes:
       label: 博客地址
-      placeholder: https://blog.lzplus.top
+      placeholder: 博客地址
     validations:
       required: true
 
@@ -23,7 +23,7 @@ body:
     id: avatar
     attributes:
       label: 头像地址
-      placeholder: https://xxx.com/avatar.jpg
+      placeholder: 头像地址
     validations:
       required: true
 
@@ -31,6 +31,6 @@ body:
     id: desc
     attributes:
       label: 博客描述
-      placeholder: 行路于云间，落笔作札记
+      placeholder: 博客描述
     validations:
       required: true
