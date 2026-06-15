@@ -1,19 +1,19 @@
 [
   {
-    "name": "测试",
-    "url": "https://blog.lzplus.top/archive/",
-    "avatar": "https://blog.lzplus.top/archive/",
-    "desc": "天外青山"
+    "name": "张洪Heo",
+    "url": "https://blog.zhheo.com/",
+    "avatar": "https://img.zhheo.com/i/67d8fa75943e4.webp",
+    "desc": "分享设计与科技生活"
   },
-  {
-    "name": "ABC",
-    "url": "https://baidu.com",
-    "avatar": "https://baidu.com",
-    "desc": "CCC"
+    {
+    "name": "喵斯基部落",
+    "url": "https://blog.moewah.com",
+    "avatar": "https://blog.moewah.com/assets/images/avatar.webp",
+    "desc": "运维之美，在于折腾与分享。"
   },
-  {
+    {
     "name": "ChenShang's Blog",
-    "url": "www.weikecc.top",
+    "url": "http://www.weikecc.top/",
     "avatar": "https://cdn.jsdmirror.com/gh/xixi-cmd/file@main/avatar.jpg",
     "desc": "山高路远，道阻且长"
   }
