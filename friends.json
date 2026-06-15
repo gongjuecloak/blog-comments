@@ -10,5 +10,11 @@
     "url": "https://baidu.com",
     "avatar": "https://baidu.com",
     "desc": "CCC"
+  },
+  {
+    "name": "ChenShang's Blog",
+    "url": "www.weikecc.top",
+    "avatar": "https://cdn.jsdmirror.com/gh/xixi-cmd/file@main/avatar.jpg",
+    "desc": "山高路远，道阻且长"
   }
 ]
