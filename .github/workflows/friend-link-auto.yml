@@ -19,38 +19,33 @@ jobs:
     if: startsWith(github.event.issue.title, '[友链申请]')
     runs-on: ubuntu-latest
     steps:
-      - name: 解析表单友链信息【Issue Form专用】
+      - name: Python解析Issue表单内容（稳定版）
         id: parse
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          BODY="${{ github.event.issue.body }}"
-          parse_field() {
-            field="$1"
-            echo "$BODY" | awk -v key="$field" '
-              $0 ~ "^### " key {flag=1; next}
-              flag && NF>0 {sub(/^[ \t]+/,""); print; exit}
-              flag && NF==0 {exit}
-            '
-          }
-          NAME=$(parse_field "博客名称")
-          URL=$(parse_field "博客地址")
-          AVATAR=$(parse_field "头像地址")
-          DESC=$(parse_field "博客描述")
+          python3 << 'PY'
+          import re, os
+          body = os.environ["ISSUE_BODY"]
+          def get_val(label: str):
+              pat = re.compile(rf'### {re.escape(label)}\s*\n+(.*?)(?=\n### |\Z)', re.S)
+              m = pat.search(body)
+              if not m:
+                  return ""
+              return m.group(1).strip()
+          name = get_val("博客名称")
+          url = get_val("博客地址")
+          avatar = get_val("头像地址")
+          desc = get_val("博客描述")
 
-          echo "name<<EOF" >> $GITHUB_OUTPUT
-          echo "$NAME" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          echo "url<<EOF" >> $GITHUB_OUTPUT
-          echo "$URL" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          echo "avatar<<EOF" >> $GITHUB_OUTPUT
-          echo "$AVATAR" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          echo "desc<<EOF" >> $GITHUB_OUTPUT
-          echo "$DESC" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          def out(key, val):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf8") as f:
+                  f.write(f"{key}<<EOFV\n{val}\nEOFV\n")
+          out("name", name)
+          out("url", url)
+          out("avatar", avatar)
+          out("desc", desc)
+          PY
 
       - name: 校验基础字段 + 探测对方网站连通性
         id: check_site
@@ -75,9 +70,9 @@ jobs:
             fi
           fi
           echo "skip=$skip" >> $GITHUB_OUTPUT
-          echo "msg<<EOF" >> $GITHUB_OUTPUT
+          echo "msg<<EOFV" >> $GITHUB_OUTPUT
           echo "$msg" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "EOFV" >> $GITHUB_OUTPUT
 
       - name: 检出 CloakBlog 仓库
         if: steps.check_site.outputs.skip == 'false'
@@ -149,7 +144,7 @@ jobs:
           with open(output, "a", encoding="utf-8") as out:
               out.write(f"skip={skip}\n")
               if skip:
-                  out.write(f"skip_msg<<EOF\n{skip_msg}\nEOF\n")
+                  out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
                   sys.exit(0)
               out.write("success=true\n")
           PYEOF
