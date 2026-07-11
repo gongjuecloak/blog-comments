@@ -1,0 +1,11 @@
+name: 删除友链申请
+description: 删除已存在的友情链接
+title: "[删除友链]"
+body:
+  - type: input
+    id: url
+    attributes:
+      label: 需要删除的博客地址（完整URL）
+      placeholder: https://example.com
+    validations:
+      required: true
