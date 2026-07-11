@@ -2,7 +2,7 @@ name: 友链自动合并
 
 on:
   issues:
-    types: [opened] # edited不再处理，避免重复添加
+    types: [opened]
 
 permissions:
   contents: write
@@ -19,24 +19,24 @@ jobs:
     if: contains(github.event.issue.labels.*.name, '友链')
     runs-on: ubuntu-latest
     steps:
-      - name: 解析友链信息
+      - name: 解析表单友链信息【适配Issue Form】
         id: parse
         run: |
           BODY="${{ github.event.issue.body }}"
-          extract() {
-            KEY="$1"
-            echo "$BODY" | awk -v k="$KEY" '
-              $0 ~ k {flag=1; next}
-              flag && /^\s*-\s+/ {sub(/^\s*-\s*/,""); print; exit}
+          # 提取 ### xxx 下方内容
+          parse_field() {
+            field="$1"
+            echo "$BODY" | awk -v key="$field" '
+              $0 ~ "^### " key {flag=1; next}
               flag && NF>0 {print; exit}
               flag && NF==0 {exit}
-            ' | xargs
+            ' | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//'
           }
-          NAME=$(extract "网站名称")
-          URL=$(extract "网站地址")
-          AVATAR=$(extract "头像")
-          DESC=$(extract "网站描述")
-          [ -z "$NAME" ] && NAME="${{ github.event.issue.title }}"
+          NAME=$(parse_field "博客名称")
+          URL=$(parse_field "博客地址")
+          AVATAR=$(parse_field "头像地址")
+          DESC=$(parse_field "博客描述")
+
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "url=$URL" >> $GITHUB_OUTPUT
           echo "avatar=$AVATAR" >> $GITHUB_OUTPUT
@@ -52,17 +52,16 @@ jobs:
           msg=""
           if [[ -z "$NAME" || -z "$URL" ]]; then
             skip="true"
-            msg="缺少【网站名称/网站地址】，表单信息不全"
+            msg="缺少【博客名称/博客地址】，表单信息不全"
           elif [[ ! "$URL" =~ ^https?:// ]]; then
             skip="true"
-            msg="网站地址必须以 http:// 或 https:// 开头"
+            msg="博客地址必须以 http:// 或 https:// 开头"
           else
-            echo "正在 Ping 目标站点: $URL"
-            # 超时10s，仅判断状态码，不跟随重定向；如需跟随重定向加 -L
-            HTTP_CODE=$(curl -m 10 -s -o /dev/null -w "%{http_code}" "$URL")
+            echo "正在检测站点: $URL"
+            HTTP_CODE=$(curl -L -A "GithubActions Bot/1.0" -m 10 -s -o /dev/null -w "%{http_code}" "$URL")
             if [[ "$HTTP_CODE" != "200" ]]; then
               skip="true"
-              msg="站点探测失败，HTTP状态码：$HTTP_CODE，请确保网站可正常访问后重新申请"
+              msg="站点访问检测失败，HTTP状态码：$HTTP_CODE，请确保网站可正常访问后重新申请"
             fi
           fi
           echo "skip=$skip" >> $GITHUB_OUTPUT
@@ -124,7 +123,6 @@ jobs:
               with open(friends_path, "w", encoding="utf-8") as f:
                   json.dump(friends, f, ensure_ascii=False, indent=2)
                   f.write("\n")
-              # 更新健康文件
               try:
                   with open(health_path, "r", encoding="utf-8") as f:
                       health = json.load(f)
@@ -137,7 +135,7 @@ jobs:
 
           print(f"skip={skip}" >> os.environ["GITHUB_OUTPUT"])
           if skip:
-              print(f"skip_msg={skip_msg}" >> os.environ["GITHUB_OUTPUT")
+              print(f"skip_msg={skip_msg}" >> os.environ["GITHUB_OUTPUT"])
               sys.exit(0)
           print("success=true" >> os.environ["GITHUB_OUTPUT"])
           PYEOF
