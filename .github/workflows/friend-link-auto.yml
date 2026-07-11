@@ -16,7 +16,7 @@ env:
 
 jobs:
   friend-link:
-    if: startsWith(github.event.issue.title, '[友链申请]') || startsWith(github.event.issue.title, '[删除友链]')
+    if: startsWith(github.event.issue.title, '[友链申请]') || startsWith(github.event.issue.title, '[删除友链]') || startsWith(github.event.issue.title, '[修改友链]')
     runs-on: ubuntu-latest
     steps:
       - name: Python解析Issue表单内容
@@ -32,6 +32,8 @@ jobs:
           action_type = "add"
           if title.startswith("[删除友链]"):
               action_type = "delete"
+          elif title.startswith("[修改友链]"):
+              action_type = "edit"
           print(f"====DEBUG==== action_type={action_type}")
 
           def get_val(label: str):
@@ -43,22 +45,30 @@ jobs:
               print(f"====DEBUG==== [{label}] => `{val}`")
               return val
 
+          old_url = ""
           if action_type == "add":
               name = get_val("博客名称")
               url = get_val("博客地址")
               avatar = get_val("头像地址")
               desc = get_val("博客描述")
-          else:
+          elif action_type == "delete":
               name = ""
               url = get_val("需要删除的博客地址（完整URL）")
               avatar = ""
               desc = ""
+          else: # edit
+              old_url = get_val("原始友链地址（用来定位条目）")
+              name = get_val("新博客名称")
+              url = get_val("新博客地址")
+              avatar = get_val("新头像地址")
+              desc = get_val("新博客描述")
 
           def out(key, val):
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf8") as f:
                   f.write(f"{key}<<EOFV\n{val}\nEOFV\n")
 
           out("action_type", action_type)
+          out("old_url", old_url)
           out("name", name)
           out("url", url)
           out("avatar", avatar)
@@ -98,6 +108,7 @@ jobs:
         if: >
           (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false')
           || steps.parse.outputs.action_type == 'delete'
+          || steps.parse.outputs.action_type == 'edit'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TARGET_REPO }}
@@ -159,7 +170,7 @@ jobs:
                   out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
           PYEOF
 
-      # ====================== 删除友链流程（ID修复：process_del） ======================
+      # ====================== 删除友链流程 ======================
       - name: 【删除】执行移除URL
         id: process_del
         if: steps.parse.outputs.action_type == 'delete'
@@ -175,7 +186,6 @@ jobs:
           del_url_input = os.environ["DEL_URL_RAW"].strip()
           print(f"====DELETE DEBUG=== 待删除URL输入: `{del_url_input}`")
 
-          # URL标准化函数：去除末尾斜杠、统一http/https用于比对
           def normalize_url(u: str):
               u = u.strip()
               while u.endswith("/"):
@@ -213,7 +223,7 @@ jobs:
 
           if len(friends) == old_len:
               skip = True
-              skip_msg = f"未匹配到友链地址：{del_url_input}（注意末尾斜杠、http/https差异）"
+              skip_msg = f"未匹配到友链地址：{del_url_input}"
           else:
               with open(friends_path, "w", encoding="utf-8") as f:
                   json.dump(friends, f, ensure_ascii=False, indent=2)
@@ -240,14 +250,109 @@ jobs:
                   out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
           PYEOF
 
+      # ====================== 【新增】修改友链流程 ======================
+      - name: 【修改】更新友链信息
+        id: process_edit
+        if: steps.parse.outputs.action_type == 'edit'
+        env:
+          OLD_URL_RAW: ${{ steps.parse.outputs.old_url }}
+          NEW_NAME: ${{ steps.parse.outputs.name }}
+          NEW_URL: ${{ steps.parse.outputs.url }}
+          NEW_AVATAR: ${{ steps.parse.outputs.avatar }}
+          NEW_DESC: ${{ steps.parse.outputs.desc }}
+          WORK_PATH: CloakBlog
+        run: |
+          python3 << 'PYEOF'
+          import json, os
+          work_dir = os.environ["WORK_PATH"]
+          friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
+          health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
+
+          old_url_input = os.environ["OLD_URL_RAW"].strip()
+          new_name = os.environ["NEW_NAME"].strip()
+          new_url = os.environ["NEW_URL"].strip()
+          new_avatar = os.environ["NEW_AVATAR"].strip()
+          new_desc = os.environ["NEW_DESC"].strip()
+
+          print(f"====EDIT DEBUG=== 原始URL: `{old_url_input}`")
+          print(f"====EDIT DEBUG=== 新URL: `{new_url}`")
+
+          def normalize_url(u: str):
+              u = u.strip()
+              while u.endswith("/"):
+                  u = u[:-1]
+              if u.startswith("http://"):
+                  u = "https://" + u[7:]
+              return u
+
+          target_norm = normalize_url(old_url_input)
+          skip = False
+          skip_msg = "未找到原始友链，无法修改"
+          found = False
+          origin_store_url = ""
+
+          try:
+              with open(friends_path, "r", encoding="utf-8") as f:
+                  friends = json.load(f)
+          except Exception:
+              friends = []
+
+          for item in friends:
+              item_url = item.get("url","").strip()
+              item_norm = normalize_url(item_url)
+              if item_norm == target_norm:
+                  found = True
+                  origin_store_url = item_url
+                  # 覆盖全部字段
+                  item["name"] = new_name
+                  item["url"] = new_url
+                  item["avatar"] = new_avatar
+                  item["desc"] = new_desc
+                  break
+
+          if found:
+              skip = False
+              skip_msg = ""
+              # 写入friends.json
+              with open(friends_path, "w", encoding="utf-8") as f:
+                  json.dump(friends, f, ensure_ascii=False, indent=2)
+                  f.write("\n")
+              print("✅ friends.json 修改完成")
+
+              # health处理：新旧url不同则删除旧key，新增新key
+              try:
+                  with open(health_path, "r", encoding="utf-8") as f:
+                      health = json.load(f)
+              except Exception:
+                  health = {}
+
+              if origin_store_url != new_url:
+                  if origin_store_url in health:
+                      del health[origin_store_url]
+                      print(f"✅ 删除旧健康key: {origin_store_url}")
+              health[new_url] = True
+              with open(health_path, "w", encoding="utf-8") as f:
+                  json.dump(health, f, ensure_ascii=False, indent=2)
+                  f.write("\n")
+              print(f"✅ 更新健康key: {new_url}")
+
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as out:
+              out.write(f"skip={skip}\n")
+              if skip:
+                  out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
+          PYEOF
+
       # ====================== 统一提交 ======================
       - name: 提交推送 CloakBlog
         if: >
           (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false' && steps.process_add.outputs.skip == 'false')
           || (steps.parse.outputs.action_type == 'delete' && steps.process_del.outputs.skip == 'false')
+          || (steps.parse.outputs.action_type == 'edit' && steps.process_edit.outputs.skip == 'false')
         env:
           ACTION_TYPE: ${{ steps.parse.outputs.action_type }}
           TARGET_URL: ${{ steps.parse.outputs.url }}
+          OLD_URL: ${{ steps.parse.outputs.old_url }}
           TARGET_NAME: ${{ steps.parse.outputs.name }}
         run: |
           cd CloakBlog
@@ -265,8 +370,10 @@ jobs:
           fi
           if [[ "$ACTION_TYPE" == "add" ]];then
             git commit -m "feat: 新增友链 - $TARGET_NAME"
-          else
+          elif [[ "$ACTION_TYPE" == "delete" ]];then
             git commit -m "chore: 删除友链 - $TARGET_URL"
+          else
+            git commit -m "chore: 修改友链 $OLD_URL → $TARGET_URL"
           fi
           git push origin ${{ env.TARGET_BRANCH }}
           echo "✅ git push 执行完毕"
@@ -290,13 +397,21 @@ jobs:
               } else {
                 commentBody = "🎉 友链校验通过，已成功录入！页面一般2分钟左右生效，感谢友链交换~";
               }
-            }else{
+            }else if(action === "delete"){
               const skipProcess = '${{ steps.process_del.outputs.skip }}';
               const processMsg = `${{ steps.process_del.outputs.skip_msg }}`;
               if(skipProcess === "true"){
                 commentBody = `❌ 删除友链失败：${processMsg}`;
               }else{
                 commentBody = "✅ 友链已成功移除，页面稍后同步更新！";
+              }
+            }else if(action === "edit"){
+              const skipProcess = '${{ steps.process_edit.outputs.skip }}';
+              const processMsg = `${{ steps.process_edit.outputs.skip_msg }}`;
+              if(skipProcess === "true"){
+                commentBody = `❌ 修改友链失败：${processMsg}`;
+              }else{
+                commentBody = "✅ 友链信息修改完成，页面稍后同步更新！";
               }
             }
             await github.rest.issues.createComment({
