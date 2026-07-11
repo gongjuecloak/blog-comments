@@ -15,7 +15,7 @@ body:
     id: url
     attributes:
       label: 博客地址
-      placeholder: 博客地址
+      placeholder: https://example.com
     validations:
       required: true
 
@@ -23,7 +23,7 @@ body:
     id: avatar
     attributes:
       label: 头像地址
-      placeholder: 头像地址
+      placeholder: https://example.com/avatar.png
     validations:
       required: true
 
@@ -31,6 +31,6 @@ body:
     id: desc
     attributes:
       label: 博客描述
-      placeholder: 博客描述
+      placeholder: 简短介绍本站内容
     validations:
       required: true
