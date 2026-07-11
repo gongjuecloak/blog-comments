@@ -19,28 +19,38 @@ jobs:
     if: contains(github.event.issue.labels.*.name, '友链')
     runs-on: ubuntu-latest
     steps:
-      - name: 解析表单友链信息【适配Issue Form】
+      - name: 解析表单友链信息【Issue Form专用】
         id: parse
         run: |
           BODY="${{ github.event.issue.body }}"
-          # 提取 ### xxx 下方内容
           parse_field() {
             field="$1"
             echo "$BODY" | awk -v key="$field" '
               $0 ~ "^### " key {flag=1; next}
-              flag && NF>0 {print; exit}
+              flag && NF>0 {sub(/^[ \t]+/,""); print; exit}
               flag && NF==0 {exit}
-            ' | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//'
+            '
           }
           NAME=$(parse_field "博客名称")
           URL=$(parse_field "博客地址")
           AVATAR=$(parse_field "头像地址")
           DESC=$(parse_field "博客描述")
 
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "avatar=$AVATAR" >> $GITHUB_OUTPUT
-          echo "desc=$DESC" >> $GITHUB_OUTPUT
+          echo "name<<EOF" >> $GITHUB_OUTPUT
+          echo "$NAME" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "url<<EOF" >> $GITHUB_OUTPUT
+          echo "$URL" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "avatar<<EOF" >> $GITHUB_OUTPUT
+          echo "$AVATAR" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "desc<<EOF" >> $GITHUB_OUTPUT
+          echo "$DESC" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: 校验基础字段 + 探测对方网站连通性
         id: check_site
@@ -65,7 +75,9 @@ jobs:
             fi
           fi
           echo "skip=$skip" >> $GITHUB_OUTPUT
-          echo "msg=$msg" >> $GITHUB_OUTPUT
+          echo "msg<<EOF" >> $GITHUB_OUTPUT
+          echo "$msg" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: 检出 CloakBlog 仓库
         if: steps.check_site.outputs.skip == 'false'
@@ -133,11 +145,13 @@ jobs:
                   json.dump(health, f, ensure_ascii=False, indent=2)
                   f.write("\n")
 
-          print(f"skip={skip}" >> os.environ["GITHUB_OUTPUT"])
-          if skip:
-              print(f"skip_msg={skip_msg}" >> os.environ["GITHUB_OUTPUT"])
-              sys.exit(0)
-          print("success=true" >> os.environ["GITHUB_OUTPUT"])
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as out:
+              out.write(f"skip={skip}\n")
+              if skip:
+                  out.write(f"skip_msg<<EOF\n{skip_msg}\nEOF\n")
+                  sys.exit(0)
+              out.write("success=true\n")
           PYEOF
 
       - name: 提交推送 CloakBlog
@@ -159,9 +173,9 @@ jobs:
         with:
           script: |
             const skipCheck = '${{ steps.check_site.outputs.skip }}';
-            const checkMsg = '${{ steps.check_site.outputs.msg }}';
+            const checkMsg = `${{ steps.check_site.outputs.msg }}`;
             const skipProcess = '${{ steps.process_link.outputs.skip }}';
-            const processMsg = '${{ steps.process_link.outputs.skip_msg }}';
+            const processMsg = `${{ steps.process_link.outputs.skip_msg }}`;
 
             let commentBody = "";
             if (skipCheck === "true") {
