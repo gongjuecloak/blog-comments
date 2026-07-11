@@ -1,0 +1,43 @@
+name: 修改友链信息
+description: 修改已存在友链的名称、地址、头像、简介
+title: "[修改友链]"
+body:
+  - type: input
+    id: old_url
+    attributes:
+      label: 原始友链地址（用来定位条目）
+      placeholder: https://old-site.com
+    validations:
+      required: true
+
+  - type: input
+    id: name
+    attributes:
+      label: 新博客名称
+      placeholder: 博客名称
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: 新博客地址
+      placeholder: https://new-site.com
+    validations:
+      required: true
+
+  - type: input
+    id: avatar
+    attributes:
+      label: 新头像地址
+      placeholder: https://xxx/avatar.png
+    validations:
+      required: true
+
+  - type: input
+    id: desc
+    attributes:
+      label: 新博客描述
+      placeholder: 站点简介
+    validations:
+      required: true
