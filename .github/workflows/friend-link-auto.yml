@@ -133,7 +133,7 @@ jobs:
                   friends = json.load(f)
           except Exception:
               friends = []
-          exist_urls = [item.get("url", "") for item in friends]
+          exist_urls = [item.get("url", "").strip() for item in friends]
           if url in exist_urls:
               skip = True
               skip_msg = f"URL {url} 已存在，请勿重复申请友链"
@@ -159,12 +159,12 @@ jobs:
                   out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
           PYEOF
 
-      # ====================== 删除友链流程 ======================
+      # ====================== 删除友链流程【重点修复】 ======================
       - name: 【删除】执行移除URL
         id: process_del
         if: steps.parse.outputs.action_type == 'delete'
         env:
-          DEL_URL: ${{ steps.parse.outputs.url }}
+          DEL_URL_RAW: ${{ steps.parse.outputs.url }}
           WORK_PATH: CloakBlog
         run: |
           python3 << 'PYEOF'
@@ -172,39 +172,50 @@ jobs:
           work_dir = os.environ["WORK_PATH"]
           friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
           health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
-          del_url = os.environ["DEL_URL"].strip()
-          print(f"====DELETE DEBUG=== 待删除URL: `{del_url}`")
+          del_url_input = os.environ["DEL_URL_RAW"].strip()
+          print(f"====DELETE DEBUG=== 待删除URL输入: `{del_url_input}`")
           skip = False
           skip_msg = ""
 
           try:
               with open(friends_path, "r", encoding="utf-8") as f:
                   friends = json.load(f)
-          except Exception:
+          except Exception as e:
+              print("读取friends.json异常:", e)
               friends = []
 
           old_len = len(friends)
-          friends = [item for item in friends if item.get("url","").strip() != del_url]
-          print(f"原数量:{old_len} 过滤后数量:{len(friends)}")
+          # 每条url统一strip再对比，消除空格差异
+          friends_filtered = []
+          for item in friends:
+              item_url = item.get("url", "").strip()
+              if item_url != del_url_input:
+                  friends_filtered.append(item)
+          friends = friends_filtered
+
+          print(f"原友链数量:{old_len} 过滤后:{len(friends)}")
 
           if len(friends) == old_len:
               skip = True
-              skip_msg = f"未在友链列表找到地址：{del_url}"
+              skip_msg = f"未匹配到友链地址：{del_url_input}"
           else:
+              # 写入friends.json
               with open(friends_path, "w", encoding="utf-8") as f:
                   json.dump(friends, f, ensure_ascii=False, indent=2)
                   f.write("\n")
+              print("✅ friends.json 已重写")
+              # 处理健康文件
               try:
                   with open(health_path, "r", encoding="utf-8") as f:
                       health = json.load(f)
               except Exception:
                   health = {}
-              if del_url in health:
-                  del health[del_url]
+              if del_url_input in health:
+                  del health[del_url_input]
               with open(health_path, "w", encoding="utf-8") as f:
                   json.dump(health, f, ensure_ascii=False, indent=2)
                   f.write("\n")
-              print("✅ 文件修改完成")
+              print("✅ friends_health.json 已更新")
 
           output = os.environ["GITHUB_OUTPUT"]
           with open(output, "a", encoding="utf-8") as out:
@@ -213,7 +224,7 @@ jobs:
                   out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
           PYEOF
 
-      # ====================== 统一提交 ======================
+      # ====================== 统一提交【增加git调试日志】 ======================
       - name: 提交推送 CloakBlog
         if: >
           (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false' && steps.process_add.outputs.skip == 'false')
@@ -227,8 +238,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ${{ env.FRIENDS_FILE }} ${{ env.HEALTH_FILE }}
+
+          echo "====git diff 变更预览===="
+          git diff --cached
+          echo "========================"
+
           if git diff --cached --quiet; then
-            echo "无文件变更，跳过提交"
+            echo "⚠️ 无文件变更，跳过提交"
             exit 0
           fi
           if [[ "$ACTION_TYPE" == "add" ]];then
@@ -237,6 +253,7 @@ jobs:
             git commit -m "chore: 删除友链 - $TARGET_URL"
           fi
           git push origin ${{ env.TARGET_BRANCH }}
+          echo "✅ git push 执行完毕"
 
       # ====================== 统一评论并关闭Issue ======================
       - name: Issue 评论 + 关闭
