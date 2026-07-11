@@ -164,64 +164,84 @@ jobs:
         id: process_del
         if: steps.parse.outputs.action_type == 'delete'
         env:
-          DEL_URL_RAW: ${{ steps.parse.outputs.url }}
-          WORK_PATH: CloakBlog
+          DEL\_URL\_RAW: ${{ steps.parse.outputs.url }}
+          WORK\_PATH: CloakBlog
         run: |
           python3 << 'PYEOF'
           import json, os
-          work_dir = os.environ["WORK_PATH"]
-          friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
-          health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
-          del_url_input = os.environ["DEL_URL_RAW"].strip()
-          print(f"====DELETE DEBUG=== 待删除URL输入: `{del_url_input}`")
+          work\_dir = os.environ\["WORK\_PATH"\]
+          friends\_path = os.path.join(work\_dir, os.environ\["FRIENDS\_FILE"\])
+          health\_path = os.path.join(work\_dir, os.environ\["HEALTH\_FILE"\])
+          del\_url\_input = os.environ\["DEL\_URL\_RAW"\].strip()
+          print(f"====DELETE DEBUG=== 待删除URL输入: \`{del\_url\_input}\`")
+
+          # URL标准化函数：去除末尾斜杠、小写协议用于比对
+          def normalize\_url(u: str):
+              u = u.strip()
+              # 移除结尾多余/
+              while u.endswith("/"):
+                  u = u\[:-1\]
+              # http<->https统一转换为https比对
+              if u.startswith("http://"):
+                  u = "https://" + u\[7:\]
+              return u
+
+          target\_norm = normalize\_url(del\_url\_input)
+          print(f"标准化比对字符串: \`{target\_norm}\`")
           skip = False
-          skip_msg = ""
+          skip\_msg = ""
 
           try:
-              with open(friends_path, "r", encoding="utf-8") as f:
+              with open(friends\_path, "r", encoding="utf-8") as f:
                   friends = json.load(f)
           except Exception as e:
               print("读取friends.json异常:", e)
-              friends = []
+              friends = \[\]
 
-          old_len = len(friends)
-          # 每条url统一strip再对比，消除空格差异
-          friends_filtered = []
+          old\_len = len(friends)
+          friends\_filtered = \[\]
+          match\_item = None
           for item in friends:
-              item_url = item.get("url", "").strip()
-              if item_url != del_url_input:
-                  friends_filtered.append(item)
-          friends = friends_filtered
+              item\_url = item.get("url", "").strip()
+              item\_norm = normalize\_url(item\_url)
+              if item\_norm != target\_norm:
+                  friends\_filtered.append(item)
+              else:
+                  match\_item = item
+                  print(f"✅ 匹配成功，原始库内URL：\`{item\_url}\`")
 
-          print(f"原友链数量:{old_len} 过滤后:{len(friends)}")
+          friends = friends\_filtered
+          print(f"原友链数量:{old\_len} 过滤后:{len(friends)}")
 
-          if len(friends) == old_len:
+          if len(friends) == old\_len:
               skip = True
-              skip_msg = f"未匹配到友链地址：{del_url_input}"
+              skip\_msg = f"未匹配到友链地址：{del\_url\_input}（请核对完整URL，注意斜杠、http/https）"
           else:
               # 写入friends.json
-              with open(friends_path, "w", encoding="utf-8") as f:
-                  json.dump(friends, f, ensure_ascii=False, indent=2)
-                  f.write("\n")
+              with open(friends\_path, "w", encoding="utf-8") as f:
+                  json.dump(friends, f, ensure\_ascii=False, indent=2)
+                  f.write("\\n")
               print("✅ friends.json 已重写")
-              # 处理健康文件
-              try:
-                  with open(health_path, "r", encoding="utf-8") as f:
-                      health = json.load(f)
-              except Exception:
-                  health = {}
-              if del_url_input in health:
-                  del health[del_url_input]
-              with open(health_path, "w", encoding="utf-8") as f:
-                  json.dump(health, f, ensure_ascii=False, indent=2)
-                  f.write("\n")
-              print("✅ friends_health.json 已更新")
+              # 处理健康文件：注意health是原始URL作为key，不能用标准化值！
+              if match\_item and "url" in match\_item:
+                  origin\_key = match\_item\["url"\]
+                  try:
+                      with open(health\_path, "r", encoding="utf-8") as f:
+                          health = json.load(f)
+                  except Exception:
+                      health = {}
+                  if origin\_key in health:
+                      del health\[origin\_key\]
+                      with open(health\_path, "w", encoding="utf-8") as f:
+                          json.dump(health, f, ensure\_ascii=False, indent=2)
+                          f.write("\\n")
+                      print(f"✅ friends\_health.json 删除原始key: {origin\_key}")
 
-          output = os.environ["GITHUB_OUTPUT"]
+          output = os.environ\["GITHUB\_OUTPUT"\]
           with open(output, "a", encoding="utf-8") as out:
-              out.write(f"skip={skip}\n")
+              out.write(f"skip={skip}\\n")
               if skip:
-                  out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
+                  out.write(f"skip\_msg<<EOFV\\n{skip\_msg}\\nEOFV\\n")
           PYEOF
 
       # ====================== 统一提交【增加git调试日志】 ======================
