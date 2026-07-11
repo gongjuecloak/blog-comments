@@ -2,89 +2,188 @@ name: 友链自动合并
 
 on:
   issues:
-    types: [opened, edited]
+    types: [opened] # edited不再处理，避免重复添加
 
 permissions:
   contents: write
   issues: write
+
+env:
+  TARGET_REPO: gongjuecloak/CloakBlog
+  TARGET_BRANCH: master
+  FRIENDS_FILE: src/friends.json
+  HEALTH_FILE: src/friends_health.json
 
 jobs:
   friend-link:
     if: contains(github.event.issue.labels.*.name, '友链')
     runs-on: ubuntu-latest
     steps:
-      - name: 检出 CloakBlog 仓库
-        uses: actions/checkout@v4
-        with:
-          repository: gongjuecloak/CloakBlog
-          token: ${{ secrets.GITHUB_TOKEN }}
-          path: CloakBlog
-          ref: master
-
       - name: 解析友链信息
         id: parse
         run: |
           BODY="${{ github.event.issue.body }}"
-          NAME=$(echo "$BODY" | grep -A3 '网站名称' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
-          URL=$(echo "$BODY" | grep -A3 '网站地址' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
-          AVATAR=$(echo "$BODY" | grep -A3 '头像' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
-          DESC=$(echo "$BODY" | grep -A5 '网站描述' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
+          extract() {
+            KEY="$1"
+            echo "$BODY" | awk -v k="$KEY" '
+              $0 ~ k {flag=1; next}
+              flag && /^\s*-\s+/ {sub(/^\s*-\s*/,""); print; exit}
+              flag && NF>0 {print; exit}
+              flag && NF==0 {exit}
+            ' | xargs
+          }
+          NAME=$(extract "网站名称")
+          URL=$(extract "网站地址")
+          AVATAR=$(extract "头像")
+          DESC=$(extract "网站描述")
           [ -z "$NAME" ] && NAME="${{ github.event.issue.title }}"
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "url=$URL" >> $GITHUB_OUTPUT
           echo "avatar=$AVATAR" >> $GITHUB_OUTPUT
           echo "desc=$DESC" >> $GITHUB_OUTPUT
 
-      - name: 添加友链到 JSON 文件
-        id: add_link
+      - name: 校验基础字段 + 探测对方网站连通性
+        id: check_site
+        env:
+          URL: ${{ steps.parse.outputs.url }}
+          NAME: ${{ steps.parse.outputs.name }}
+        run: |
+          skip="false"
+          msg=""
+          if [[ -z "$NAME" || -z "$URL" ]]; then
+            skip="true"
+            msg="缺少【网站名称/网站地址】，表单信息不全"
+          elif [[ ! "$URL" =~ ^https?:// ]]; then
+            skip="true"
+            msg="网站地址必须以 http:// 或 https:// 开头"
+          else
+            echo "正在 Ping 目标站点: $URL"
+            # 超时10s，仅判断状态码，不跟随重定向；如需跟随重定向加 -L
+            HTTP_CODE=$(curl -m 10 -s -o /dev/null -w "%{http_code}" "$URL")
+            if [[ "$HTTP_CODE" != "200" ]]; then
+              skip="true"
+              msg="站点探测失败，HTTP状态码：$HTTP_CODE，请确保网站可正常访问后重新申请"
+            fi
+          fi
+          echo "skip=$skip" >> $GITHUB_OUTPUT
+          echo "msg=$msg" >> $GITHUB_OUTPUT
+
+      - name: 检出 CloakBlog 仓库
+        if: steps.check_site.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          token: ${{ secrets.PERSONAL_TOKEN }}
+          path: CloakBlog
+          ref: ${{ env.TARGET_BRANCH }}
+
+      - name: 写入友链JSON（查重+追加）
+        id: process_link
+        if: steps.check_site.outputs.skip == 'false'
+        env:
+          NAME: ${{ steps.parse.outputs.name }}
+          URL: ${{ steps.parse.outputs.url }}
+          AVATAR: ${{ steps.parse.outputs.avatar }}
+          DESC: ${{ steps.parse.outputs.desc }}
+          WORK_PATH: CloakBlog
         run: |
           python3 << 'PYEOF'
-          import json, os, sys
-          with open(os.environ['GITHUB_OUTPUT']) as f:
-              for line in f:
-                  if '=' in line:
-                      k, v = line.strip().split('=', 1)
-                      os.environ[f'FK_{k}'] = v.strip().strip("'\"")
-          name   = os.environ.get('FK_name', '').strip()
-          url    = os.environ.get('FK_url', '').strip()
-          avatar = os.environ.get('FK_avatar', '').strip()
-          desc   = os.environ.get('FK_desc', '').strip()
-          if not name or not url:
-              print("缺少 name 或 url，跳过")
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write("skip=true\n")
+          import json
+          import os
+          import sys
+
+          work_dir = os.environ["WORK_PATH"]
+          friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
+          health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
+
+          name = os.environ.get("NAME", "").strip()
+          url = os.environ.get("URL", "").strip()
+          avatar = os.environ.get("AVATAR", "").strip()
+          desc = os.environ.get("DESC", "").strip()
+
+          skip = False
+          skip_msg = ""
+
+          try:
+              with open(friends_path, "r", encoding="utf-8") as f:
+                  friends = json.load(f)
+          except Exception:
+              friends = []
+
+          exist_urls = [item.get("url", "") for item in friends]
+          if url in exist_urls:
+              skip = True
+              skip_msg = f"URL {url} 已存在，请勿重复申请友链"
+          else:
+              friends.append({
+                  "name": name,
+                  "url": url,
+                  "avatar": avatar,
+                  "desc": desc
+              })
+              with open(friends_path, "w", encoding="utf-8") as f:
+                  json.dump(friends, f, ensure_ascii=False, indent=2)
+                  f.write("\n")
+              # 更新健康文件
+              try:
+                  with open(health_path, "r", encoding="utf-8") as f:
+                      health = json.load(f)
+              except Exception:
+                  health = {}
+              health[url] = True
+              with open(health_path, "w", encoding="utf-8") as f:
+                  json.dump(health, f, ensure_ascii=False, indent=2)
+                  f.write("\n")
+
+          print(f"skip={skip}" >> os.environ["GITHUB_OUTPUT"])
+          if skip:
+              print(f"skip_msg={skip_msg}" >> os.environ["GITHUB_OUTPUT")
               sys.exit(0)
-          with open('CloakBlog/src/friends.json', 'r', encoding='utf-8') as f:
-              friends = json.load(f)
-          if url in [item['url'] for item in friends]:
-              print(f"URL [{url}] 已存在，跳过")
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write("skip=true\n")
-              sys.exit(0)
-          friends.append({"name": name, "url": url, "avatar": avatar, "desc": desc})
-          with open('CloakBlog/src/friends.json', 'w', encoding='utf-8') as f:
-              json.dump(friends, f, ensure_ascii=False, indent=2)
-              f.write('\n')
-          print(f"friends.json 更新，共 {len(friends)} 条")
-          with open('CloakBlog/src/friends_health.json', 'r', encoding='utf-8') as f:
-              health = json.load(f)
-          health[url] = True
-          with open('CloakBlog/src/friends_health.json', 'w', encoding='utf-8') as f:
-              json.dump(health, f, ensure_ascii=False, indent=2)
-              f.write('\n')
-          print(f"friends_health.json 添加 [{url}] -> true")
+          print("success=true" >> os.environ["GITHUB_OUTPUT"])
           PYEOF
 
-      - name: 提交并推送 CloakBlog
+      - name: 提交推送 CloakBlog
+        if: steps.check_site.outputs.skip == 'false' && steps.process_link.outputs.skip == 'false'
         run: |
           cd CloakBlog
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/friends.json src/friends_health.json
-          git diff --cached --quiet && echo "无变更" && exit 0
-          git commit -m "feat: 添加友链 - ${{ steps.parse.outputs.name }}"
-          git push
+          git add ${{ env.FRIENDS_FILE }} ${{ env.HEALTH_FILE }}
+          if git diff --cached --quiet; then
+            echo "无文件变更，跳过提交"
+            exit 0
+          fi
+          git commit -m "feat: 新增友链 - ${{ steps.parse.outputs.name }}"
+          git push origin ${{ env.TARGET_BRANCH }}
 
-      - name: 关闭 issue
-        run: |
-          gh issue close ${{ github.event.issue.number }} --comment "🎉 友链已自动添加，通常 2 分钟内显示。感谢交换~"
+      - name: Issue 评论 + 关闭
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const skipCheck = '${{ steps.check_site.outputs.skip }}';
+            const checkMsg = '${{ steps.check_site.outputs.msg }}';
+            const skipProcess = '${{ steps.process_link.outputs.skip }}';
+            const processMsg = '${{ steps.process_link.outputs.skip_msg }}';
+
+            let commentBody = "";
+            if (skipCheck === "true") {
+              commentBody = `❌ 友链申请失败：${checkMsg}`;
+            } else if (skipProcess === "true") {
+              commentBody = `❌ 友链申请失败：${processMsg}`;
+            } else {
+              commentBody = "🎉 友链校验通过，已成功录入！页面一般2分钟左右生效，感谢友链交换~";
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: commentBody
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: "closed"
+            });
