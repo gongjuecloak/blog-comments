@@ -1,61 +1,90 @@
-name: 自动添加友链
+name: 友链自动合并
+
 on:
   issues:
-    types: [closed]
+    types: [opened, edited]
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
-  add-friend:
+  friend-link:
+    if: contains(github.event.issue.labels.*.name, '友链')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出 CloakBlog 仓库
+        uses: actions/checkout@v4
         with:
+          repository: gongjuecloak/CloakBlog
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: main
+          path: CloakBlog
+          ref: master
 
-      - name: 解析并自动提交
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const { execSync } = require('child_process');
-            const body = context.payload.issue.body;
-            
-            // ✅ 改成匹配换行格式的正则
-            const name = body.match(/### 博客名称\s*\n\s*(.+)/)?.[1]?.trim();
-            const url = body.match(/### 博客地址\s*\n\s*(.+)/)?.[1]?.trim();
-            const avatar = body.match(/### 头像地址\s*\n\s*(.+)/)?.[1]?.trim();
-            const desc = body.match(/### 博客描述\s*\n\s*(.+)/)?.[1]?.trim();
-            
-            console.log('解析结果:', {name, url, avatar, desc});
-            
-            if (!name || !url) {
-              console.log('❌ 信息不完整');
-              return;
-            }
-            
-            // 读取或创建文件
-            let data = [];
-            if (fs.existsSync('friends.json')) {
-              data = JSON.parse(fs.readFileSync('friends.json', 'utf8'));
-            }
-            
-            data.push({ 
-              name, 
-              url, 
-              avatar: avatar || 'https://picsum.photos/100/100', 
-              desc: desc || '' 
-            });
-            
-            fs.writeFileSync('friends.json', JSON.stringify(data, null, 2));
-            
-            // 提交
-            execSync('git config user.name "github-actions[bot]"');
-            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
-            execSync('git add friends.json');
-            execSync('git commit -m "自动添加友链：' + name + '" || true');
-            execSync('git push origin main');
-            
-            console.log('✅ 友链添加成功:', name);
+      - name: 解析友链信息
+        id: parse
+        run: |
+          BODY="${{ github.event.issue.body }}"
+          NAME=$(echo "$BODY" | grep -A3 '网站名称' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
+          URL=$(echo "$BODY" | grep -A3 '网站地址' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
+          AVATAR=$(echo "$BODY" | grep -A3 '头像' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
+          DESC=$(echo "$BODY" | grep -A5 '网站描述' | grep -E '^\s+-\s' | head -1 | sed 's/^\s*-\s*//' | xargs)
+          [ -z "$NAME" ] && NAME="${{ github.event.issue.title }}"
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "avatar=$AVATAR" >> $GITHUB_OUTPUT
+          echo "desc=$DESC" >> $GITHUB_OUTPUT
+
+      - name: 添加友链到 JSON 文件
+        id: add_link
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys
+          with open(os.environ['GITHUB_OUTPUT']) as f:
+              for line in f:
+                  if '=' in line:
+                      k, v = line.strip().split('=', 1)
+                      os.environ[f'FK_{k}'] = v.strip().strip("'\"")
+          name   = os.environ.get('FK_name', '').strip()
+          url    = os.environ.get('FK_url', '').strip()
+          avatar = os.environ.get('FK_avatar', '').strip()
+          desc   = os.environ.get('FK_desc', '').strip()
+          if not name or not url:
+              print("缺少 name 或 url，跳过")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write("skip=true\n")
+              sys.exit(0)
+          with open('CloakBlog/src/friends.json', 'r', encoding='utf-8') as f:
+              friends = json.load(f)
+          if url in [item['url'] for item in friends]:
+              print(f"URL [{url}] 已存在，跳过")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write("skip=true\n")
+              sys.exit(0)
+          friends.append({"name": name, "url": url, "avatar": avatar, "desc": desc})
+          with open('CloakBlog/src/friends.json', 'w', encoding='utf-8') as f:
+              json.dump(friends, f, ensure_ascii=False, indent=2)
+              f.write('\n')
+          print(f"friends.json 更新，共 {len(friends)} 条")
+          with open('CloakBlog/src/friends_health.json', 'r', encoding='utf-8') as f:
+              health = json.load(f)
+          health[url] = True
+          with open('CloakBlog/src/friends_health.json', 'w', encoding='utf-8') as f:
+              json.dump(health, f, ensure_ascii=False, indent=2)
+              f.write('\n')
+          print(f"friends_health.json 添加 [{url}] -> true")
+          PYEOF
+
+      - name: 提交并推送 CloakBlog
+        run: |
+          cd CloakBlog
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/friends.json src/friends_health.json
+          git diff --cached --quiet && echo "无变更" && exit 0
+          git commit -m "feat: 添加友链 - ${{ steps.parse.outputs.name }}"
+          git push
+
+      - name: 关闭 issue
+        run: |
+          gh issue close ${{ github.event.issue.number }} --comment "🎉 友链已自动添加，通常 2 分钟内显示。感谢交换~"
