@@ -16,39 +16,56 @@ env:
 
 jobs:
   friend-link:
-    if: startsWith(github.event.issue.title, '[友链申请]')
+    if: startsWith(github.event.issue.title, '[友链申请]') || startsWith(github.event.issue.title, '[删除友链]')
     runs-on: ubuntu-latest
     steps:
-      - name: Python解析Issue表单内容（稳定版）
+      - name: Python解析Issue表单内容
         id: parse
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
           python3 << 'PY'
           import re, os
           body = os.environ["ISSUE_BODY"]
+          title = os.environ["ISSUE_TITLE"]
+          action_type = "add"
+          if title.startswith("[删除友链]"):
+              action_type = "delete"
+
           def get_val(label: str):
               pat = re.compile(rf'### {re.escape(label)}\s*\n+(.*?)(?=\n### |\Z)', re.S)
               m = pat.search(body)
               if not m:
                   return ""
               return m.group(1).strip()
-          name = get_val("博客名称")
-          url = get_val("博客地址")
-          avatar = get_val("头像地址")
-          desc = get_val("博客描述")
+
+          if action_type == "add":
+              name = get_val("博客名称")
+              url = get_val("博客地址")
+              avatar = get_val("头像地址")
+              desc = get_val("博客描述")
+          else:
+              name = ""
+              url = get_val("需要删除的博客地址（完整URL）")
+              avatar = ""
+              desc = ""
 
           def out(key, val):
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf8") as f:
                   f.write(f"{key}<<EOFV\n{val}\nEOFV\n")
+
+          out("action_type", action_type)
           out("name", name)
           out("url", url)
           out("avatar", avatar)
           out("desc", desc)
           PY
 
-      - name: 校验基础字段 + 探测对方网站连通性
-        id: check_site
+      # ====================== 新增友链流程 ======================
+      - name: 【新增】校验基础字段 + 探测对方网站连通性
+        id: check_site_add
+        if: steps.parse.outputs.action_type == 'add'
         env:
           URL: ${{ steps.parse.outputs.url }}
           NAME: ${{ steps.parse.outputs.name }}
@@ -75,7 +92,7 @@ jobs:
           echo "EOFV" >> $GITHUB_OUTPUT
 
       - name: 检出 CloakBlog 仓库
-        if: steps.check_site.outputs.skip == 'false'
+        if: (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false') || steps.parse.outputs.action_type == 'delete'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TARGET_REPO }}
@@ -83,9 +100,9 @@ jobs:
           path: CloakBlog
           ref: ${{ env.TARGET_BRANCH }}
 
-      - name: 写入友链JSON（查重+追加）
-        id: process_link
-        if: steps.check_site.outputs.skip == 'false'
+      - name: 【新增】写入友链JSON（查重+追加）
+        id: process_add
+        if: steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false'
         env:
           NAME: ${{ steps.parse.outputs.name }}
           URL: ${{ steps.parse.outputs.url }}
@@ -96,8 +113,6 @@ jobs:
           python3 << 'PYEOF'
           import json
           import os
-          import sys
-
           work_dir = os.environ["WORK_PATH"]
           friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
           health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
@@ -106,7 +121,6 @@ jobs:
           url = os.environ.get("URL", "").strip()
           avatar = os.environ.get("AVATAR", "").strip()
           desc = os.environ.get("DESC", "").strip()
-
           skip = False
           skip_msg = ""
 
@@ -115,18 +129,12 @@ jobs:
                   friends = json.load(f)
           except Exception:
               friends = []
-
           exist_urls = [item.get("url", "") for item in friends]
           if url in exist_urls:
               skip = True
               skip_msg = f"URL {url} 已存在，请勿重复申请友链"
           else:
-              friends.append({
-                  "name": name,
-                  "url": url,
-                  "avatar": avatar,
-                  "desc": desc
-              })
+              friends.append({"name": name, "url": url, "avatar": avatar, "desc": desc})
               with open(friends_path, "w", encoding="utf-8") as f:
                   json.dump(friends, f, ensure_ascii=False, indent=2)
                   f.write("\n")
@@ -145,12 +153,69 @@ jobs:
               out.write(f"skip={skip}\n")
               if skip:
                   out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
-                  sys.exit(0)
-              out.write("success=true\n")
           PYEOF
 
+      # ====================== 删除友链流程 ======================
+      - name: 【删除】执行移除URL
+        id: process_del
+        if: steps.parse.outputs.action_type == 'delete'
+        env:
+          DEL_URL: ${{ steps.parse.outputs.url }}
+          WORK_PATH: CloakBlog
+        run: |
+          python3 << 'PYEOF'
+          import json, os
+          work_dir = os.environ["WORK_PATH"]
+          friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
+          health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
+          del_url = os.environ["DEL_URL"].strip()
+          skip = False
+          skip_msg = ""
+
+          try:
+              with open(friends_path, "r", encoding="utf-8") as f:
+                  friends = json.load(f)
+          except Exception:
+              friends = []
+
+          old_len = len(friends)
+          # 过滤掉目标url
+          friends = [item for item in friends if item.get("url","") != del_url]
+          if len(friends) == old_len:
+              skip = True
+              skip_msg = f"未在友链列表找到地址：{del_url}"
+          else:
+              with open(friends_path, "w", encoding="utf-8") as f:
+                  json.dump(friends, f, ensure_ascii=False, indent=2)
+                  f.write("\n")
+              # 删除健康检测对应key
+              try:
+                  with open(health_path, "r", encoding="utf-8") as f:
+                      health = json.load(f)
+              except Exception:
+                  health = {}
+              if del_url in health:
+                  del health[del_url]
+              with open(health_path, "w", encoding="utf-8") as f:
+                  json.dump(health, f, ensure_ascii=False, indent=2)
+                  f.write("\n")
+
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as out:
+              out.write(f"skip={skip}\n")
+              if skip:
+                  out.write(f"skip_msg<<EOFV\n{skip_msg}\nEOFV\n")
+          PYEOF
+
+      # ====================== 统一提交 ======================
       - name: 提交推送 CloakBlog
-        if: steps.check_site.outputs.skip == 'false' && steps.process_link.outputs.skip == 'false'
+        if: >
+          (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false' && steps.process_add.outputs.skip == 'false')
+          || (steps.parse.outputs.action_type == 'delete' && steps.process_del.outputs.skip == 'false')
+        env:
+          ACTION_TYPE: ${{ steps.parse.outputs.action_type }}
+          TARGET_URL: ${{ steps.parse.outputs.url }}
+          TARGET_NAME: ${{ steps.parse.outputs.name }}
         run: |
           cd CloakBlog
           git config user.name "github-actions[bot]"
@@ -160,34 +225,47 @@ jobs:
             echo "无文件变更，跳过提交"
             exit 0
           fi
-          git commit -m "feat: 新增友链 - ${{ steps.parse.outputs.name }}"
+          if [[ "$ACTION_TYPE" == "add" ]];then
+            git commit -m "feat: 新增友链 - $TARGET_NAME"
+          else
+            git commit -m "chore: 删除友链 - $TARGET_URL"
+          fi
           git push origin ${{ env.TARGET_BRANCH }}
 
+      # ====================== 统一评论并关闭Issue ======================
       - name: Issue 评论 + 关闭
         uses: actions/github-script@v7
         with:
           script: |
-            const skipCheck = '${{ steps.check_site.outputs.skip }}';
-            const checkMsg = `${{ steps.check_site.outputs.msg }}`;
-            const skipProcess = '${{ steps.process_link.outputs.skip }}';
-            const processMsg = `${{ steps.process_link.outputs.skip_msg }}`;
-
+            const action = '${{ steps.parse.outputs.action_type }}';
             let commentBody = "";
-            if (skipCheck === "true") {
-              commentBody = `❌ 友链申请失败：${checkMsg}`;
-            } else if (skipProcess === "true") {
-              commentBody = `❌ 友链申请失败：${processMsg}`;
-            } else {
-              commentBody = "🎉 友链校验通过，已成功录入！页面一般2分钟左右生效，感谢友链交换~";
+            if(action === "add"){
+              const skipCheck = '${{ steps.check_site_add.outputs.skip }}';
+              const checkMsg = `${{ steps.check_site_add.outputs.msg }}`;
+              const skipProcess = '${{ steps.process_add.outputs.skip }}';
+              const processMsg = `${{ steps.process_add.outputs.skip_msg }}`;
+              if (skipCheck === "true") {
+                commentBody = `❌ 友链申请失败：${checkMsg}`;
+              } else if (skipProcess === "true") {
+                commentBody = `❌ 友链申请失败：${processMsg}`;
+              } else {
+                commentBody = "🎉 友链校验通过，已成功录入！页面一般2分钟左右生效，感谢友链交换~";
+              }
+            }else{
+              const skipProcess = '${{ steps.process_del.outputs.skip }}';
+              const processMsg = `${{ steps.process_del.outputs.skip_msg }}`;
+              if(skipProcess === "true"){
+                commentBody = `❌ 删除友链失败：${processMsg}`;
+              }else{
+                commentBody = "✅ 友链已成功移除，页面稍后同步更新！";
+              }
             }
-
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: commentBody
             });
-
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
