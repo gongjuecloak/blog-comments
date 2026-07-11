@@ -32,13 +32,16 @@ jobs:
           action_type = "add"
           if title.startswith("[删除友链]"):
               action_type = "delete"
+          print(f"====DEBUG==== action_type={action_type}")
 
           def get_val(label: str):
               pat = re.compile(rf'### {re.escape(label)}\s*\n+(.*?)(?=\n### |\Z)', re.S)
               m = pat.search(body)
-              if not m:
-                  return ""
-              return m.group(1).strip()
+              val = ""
+              if m:
+                  val = m.group(1).strip()
+              print(f"====DEBUG==== [{label}] => `{val}`")
+              return val
 
           if action_type == "add":
               name = get_val("博客名称")
@@ -92,7 +95,9 @@ jobs:
           echo "EOFV" >> $GITHUB_OUTPUT
 
       - name: 检出 CloakBlog 仓库
-        if: (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false') || steps.parse.outputs.action_type == 'delete'
+        if: >
+          (steps.parse.outputs.action_type == 'add' && steps.check_site_add.outputs.skip == 'false')
+          || steps.parse.outputs.action_type == 'delete'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TARGET_REPO }}
@@ -111,8 +116,7 @@ jobs:
           WORK_PATH: CloakBlog
         run: |
           python3 << 'PYEOF'
-          import json
-          import os
+          import json, os
           work_dir = os.environ["WORK_PATH"]
           friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
           health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
@@ -169,6 +173,7 @@ jobs:
           friends_path = os.path.join(work_dir, os.environ["FRIENDS_FILE"])
           health_path = os.path.join(work_dir, os.environ["HEALTH_FILE"])
           del_url = os.environ["DEL_URL"].strip()
+          print(f"====DELETE DEBUG=== 待删除URL: `{del_url}`")
           skip = False
           skip_msg = ""
 
@@ -179,8 +184,9 @@ jobs:
               friends = []
 
           old_len = len(friends)
-          # 过滤掉目标url
-          friends = [item for item in friends if item.get("url","") != del_url]
+          friends = [item for item in friends if item.get("url","").strip() != del_url]
+          print(f"原数量:{old_len} 过滤后数量:{len(friends)}")
+
           if len(friends) == old_len:
               skip = True
               skip_msg = f"未在友链列表找到地址：{del_url}"
@@ -188,7 +194,6 @@ jobs:
               with open(friends_path, "w", encoding="utf-8") as f:
                   json.dump(friends, f, ensure_ascii=False, indent=2)
                   f.write("\n")
-              # 删除健康检测对应key
               try:
                   with open(health_path, "r", encoding="utf-8") as f:
                       health = json.load(f)
@@ -199,6 +204,7 @@ jobs:
               with open(health_path, "w", encoding="utf-8") as f:
                   json.dump(health, f, ensure_ascii=False, indent=2)
                   f.write("\n")
+              print("✅ 文件修改完成")
 
           output = os.environ["GITHUB_OUTPUT"]
           with open(output, "a", encoding="utf-8") as out:
